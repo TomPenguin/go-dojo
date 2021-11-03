@@ -6,7 +6,9 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,45 +29,82 @@ func openImage(path string) (*image.Image, error) {
 	return &image, nil
 }
 
-type Filename struct {
-	name string
-	ext  string
-}
+func createEmptyPngFile(target string) *os.File {
+	pos := strings.LastIndex(target, ".")
+	fmt.Println(target[pos:] + ".png")
+	fso, err := os.Create(target[pos:] + ".png")
 
-func getFileName(path string) Filename {
-	pos := strings.LastIndex(path, ".")
-	return Filename{path[:pos], path[pos+1:]}
-}
-
-func jpgToPng(image *image.Image, filename Filename) error {
-	fso, err := os.Create("./" + filename.name + ".png")
 	if err != nil {
 		panic(err)
 	}
 	defer fso.Close()
 
-	return png.Encode(fso, *image)
+	return fso
 }
 
-func convert(path string) error {
-	filename := getFileName(path)
-	if filename.ext != "jpg" && filename.ext != "jpeg" {
+func getDestination(startingPoint string) func(filename string) string {
+	abs, err := filepath.Abs(startingPoint)
+	if err != nil {
+		panic(err)
+	}
+	destinationDir := filepath.Join(abs, "..", "converted")
+
+	return func(filename string) string {
+		rel, err := filepath.Rel(startingPoint, filename)
+		if err != nil {
+			panic(err)
+		}
+		return filepath.Join(destinationDir, rel)
+	}
+}
+
+func isJpeg(path string) bool {
+	ext := filepath.Ext(path)
+	return ext == ".jpg" || ext == ".jpeg"
+}
+
+func toPng(image *image.Image, target string) error {
+	return png.Encode(createEmptyPngFile(target), *image)
+}
+
+func convert(curPath string, getDestination func(path string) string) error {
+	if !isJpeg(curPath) {
 		return nil
 	}
 
-	image, err := openImage(path)
+	fmt.Println("ss")
+
+	image, err := openImage(curPath)
 	if err != nil {
 		fmt.Println("failure opening image: ", err)
 		return nil
 	}
 
-	return jpgToPng(image, filename)
+	return toPng(image, getDestination(curPath))
+}
+
+func walkAndConvert(path string) {
+	destination := getDestination(path)
+
+	filepath.WalkDir(path, func(curPath string, _ fs.DirEntry, _ error) error {
+		return convert(curPath, destination)
+	})
+}
+
+func available(target string) bool {
+	fileInfo, err := os.Stat(target)
+
+	return err != nil && fileInfo.IsDir()
 }
 
 func main() {
 	flag.Parse()
 	target := flag.Arg(0)
 
-	fmt.Println(getFileName(target))
-	convert(target)
+	// if !available(target) {
+	// 	fmt.Println("error:", target, "is not available.")
+	// 	return
+	// }
+
+	walkAndConvert(target)
 }
